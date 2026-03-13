@@ -21,6 +21,8 @@ import {
 import { formatCurrency, formatDate } from './utils/format';
 import { generateCostReportPdf } from './utils/pdf';
 import { loadSavedCases, saveCaseToStorage } from './utils/storage';
+import { signOut } from 'firebase/auth';
+import { auth } from './utils/firebase';
 
 type WatchedFormValues = Partial<Omit<CaseFormValues, 'timeEntries'>> & {
   timeEntries?: Partial<Record<TimeEntryKey, Partial<CaseFormValues['timeEntries'][TimeEntryKey]>>>;
@@ -142,6 +144,22 @@ const watchedValues = useWatch({ control });
             <span>Moms: {(currentVatRate * 100).toFixed(0)}%</span>
             <span>Räntesats: {((values.annualInterestRate || 0) * 100).toFixed(2)}%</span>
             <span>EUR Kurs: {exchangeRate.toFixed(4)}</span>
+            <button 
+              type="button" 
+              onClick={() => signOut(auth)}
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(255,255,255,0.2)',
+                color: '#fff',
+                padding: '4px 12px',
+                borderRadius: '6px',
+                marginTop: '8px',
+                cursor: 'pointer',
+                fontSize: '0.85rem'
+              }}
+            >
+              Logga ut
+            </button>
           </div>
         </section>
 
