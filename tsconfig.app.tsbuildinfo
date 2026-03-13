@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/constants.ts","./src/main.tsx","./src/types.ts","./src/utils/calculations.ts","./src/utils/format.ts","./src/utils/logobase64.ts","./src/utils/pdf.ts","./src/utils/storage.ts"],"version":"5.9.3"}
