@@ -113,8 +113,8 @@ export function getCalculatedTotals(
 
   const subtotalSek =
     values.caseType === 'FT'
-      ? roundCurrency(claimAmountSek + ftLegalCostSek + toNumber(values.courtFee))
-      : roundCurrency(claimAmountSek + legalCostBaseSek);
+      ? roundCurrency(ftLegalCostSek + toNumber(values.courtFee))
+      : roundCurrency(timeEntriesTotalSek + percentageFeeSek + toNumber(values.courtFee));
 
   const vatBaseSek = values.caseType === 'FT' ? ftLegalCostSek : roundCurrency(timeEntriesTotalSek + percentageFeeSek);
   const vatAmountSek = roundCurrency(vatBaseSek * vatRate);
@@ -122,7 +122,9 @@ export function getCalculatedTotals(
   // The grand total still aggregates everything. The total reflects the strict subtotal + vat.
   const totalSek = roundCurrency(subtotalSek + vatAmountSek);
   
-  const grandTotalSek = roundCurrency(totalSek + (claimInterestEur / (values.exchangeRateSekToEur || 1)) + percentageFeeSek);
+  const grandTotalSek = values.caseType === 'FT'
+    ? roundCurrency(claimAmountSek + totalSek + (claimInterestEur / (values.exchangeRateSekToEur || 1)))
+    : roundCurrency(claimAmountSek + legalInterestSek + totalSek + (claimInterestEur / (values.exchangeRateSekToEur || 1)));
 
   return {
     hourlyRate,
