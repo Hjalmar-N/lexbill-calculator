@@ -110,7 +110,13 @@ export function generateCostReportPdf(
   const lineItems: Array<[string, string, string, string]> = [];
 
   if (values.caseType === 'FT') {
-    lineItems.push(['Rättslig kostnad', '1', '', formatCurrency(toNumber(values.ftNumberOfPersons) * 1982.5)]);
+    const hours = toNumber(values.ftNumberOfPersons);
+    lineItems.push([
+      'Rättslig kostnad',
+      hours.toString(),
+      formatCurrency(totals.hourlyRate),
+      formatCurrency(hours * totals.hourlyRate)
+    ]);
     lineItems.push(['Ansökningsavgift', '1', '', formatCurrency(toNumber(values.courtFee))]);
   } else {
     // OT Table
@@ -148,7 +154,7 @@ export function generateCostReportPdf(
   autoTable(doc, {
     startY: tableStartY,
     theme: 'plain',
-    head: [['Post', 'Antal', 'Timpris', 'Totalt inkl. moms']],
+    head: [['Post', 'Antal', 'Timpris', 'Totalt']],
     body: lineItems,
     styles: {
       font: 'helvetica',

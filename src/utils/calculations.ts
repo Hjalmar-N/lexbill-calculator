@@ -11,7 +11,7 @@ import type {
 import { roundCurrency, toNumber } from './format';
 
 export function getHourlyRate(partyType: PartyType): number {
-  return partyType === 'FR' ? 1586 : 1982.5;
+  return 1586;
 }
 
 export function getVatRate(partyType: PartyType): number {
@@ -105,7 +105,7 @@ export function getCalculatedTotals(
   const claimInterestEur = options?.claimInterest ?? 0;
   const legalInterestSek = options?.legalInterest ?? 0;
   
-  const ftLegalCostSek = toNumber(values.ftNumberOfPersons) * 1982.5;
+  const ftLegalCostSek = toNumber(values.ftNumberOfPersons) * 1586;
   const legalCostBaseSek =
     values.caseType === 'FT'
       ? roundCurrency(ftLegalCostSek + toNumber(values.courtFee))
@@ -146,7 +146,7 @@ export function buildLegalCostPrincipal(values: CaseFormValues): number {
   const vatRate = getVatRate(values.partyType);
 
   if (values.caseType === 'FT') {
-    const ftCost = toNumber(values.ftNumberOfPersons) * 1982.5;
+    const ftCost = toNumber(values.ftNumberOfPersons) * 1586;
     const vatAmount = roundCurrency(ftCost * vatRate);
     return roundCurrency(ftCost + vatAmount + toNumber(values.courtFee));
   }

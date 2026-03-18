@@ -281,7 +281,7 @@ const watchedValues = useWatch({ control });
               <section className="panel">
                 <div className="section-heading">
                   <h2>FT-kostnader</h2>
-                  <p>Beräknas automatiskt (1982.5 kr × antal personer).</p>
+                  <p>Beräknas automatiskt (1586 kr + moms × antal personer/timmar).</p>
                 </div>
                 <div className="grid one">
                   <label>
