@@ -1,9 +1,9 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { TIME_ENTRY_LABELS } from '../constants';
-import type { CaseFormValues, TimeEntryKey, TotalsSnapshot } from '../types';
+import type { CaseFormValues, TotalsSnapshot } from '../types';
+import { TASK_CATEGORIES } from '../constants';
 import { formatCurrency, formatDate, toNumber } from './format';
-import { getTimeEntryTotal } from './calculations';
+import { getBalanceDue, getTimeEntryHours, getTimeEntryTotal } from './calculations';
 import { FLYGHJAELP_LOGO_BASE64 } from './logoBase64';
 
 export function generateCostReportPdf(
@@ -15,228 +15,203 @@ export function generateCostReportPdf(
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
 
+  const currencyStr = values.country === 'FI' ? 'EUR' : 'SEK';
+
   // --- Header ---
   // Logo
-  doc.addImage(FLYGHJAELP_LOGO_BASE64, 'PNG', 15, 15, 50, 15);
+  doc.addImage(FLYGHJAELP_LOGO_BASE64, 'PNG', 15, 15, 45, 13);
   
-  // Title (Top Right)
+  // Right side Header (Title and Invoice Nr)
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(12);
-  doc.setTextColor(41, 153, 204); // Light blue from logo approximately
-  doc.text('KOSTNADSREDOGÖRELSE', pageWidth - 15, 23, { align: 'right' });
-
-  // --- Upper Block ---
-  doc.setTextColor(33, 33, 33);
+  doc.setFontSize(22);
+  doc.setTextColor(50, 50, 50);
+  doc.text('invoice', pageWidth - 15, 23, { align: 'right' });
+  
   doc.setFontSize(10);
-  
-  // Left: Ref & FR Block
+  doc.setTextColor(100, 100, 100);
+  doc.text(`# ${values.caseNumber || values.internalReference || '-'}`, pageWidth - 15, 29, { align: 'right' });
+
+  // --- Company Details ---
+  doc.setFontSize(9);
+  doc.setTextColor(50, 50, 50);
   doc.setFont('helvetica', 'bold');
-  let leftY = 45;
-  doc.text(values.internalReference || '-', 15, leftY);
-  leftY += 6;
-  
+  let leftY = 35;
+  doc.text('Flyhjælp Aps', 15, leftY);
+  doc.setFont('helvetica', 'normal');
+  leftY += 5;
+  const companyLines = [
+    'Holmbladsgade 133',
+    '2300 København S',
+    'Danmark'
+  ];
+  doc.text(companyLines, 15, leftY);
+
+  // --- Bill To & Date/Balance ---
+  leftY += 20;
+  doc.setTextColor(150, 150, 150);
+  doc.text('Bill To:', 15, leftY);
+  leftY += 5;
+
+  doc.setTextColor(50, 50, 50);
   if (values.partyType === 'FR') {
+    doc.setFont('helvetica', 'bold');
     doc.text('Flightright GmbH', 15, leftY);
-    leftY += 6;
     doc.setFont('helvetica', 'normal');
-    const frLines = [
-      'VAT nr.:',
-      'DE272238629',
-      'Revaler Straße 28',
-      '10245 Berlin',
-      'Tyskland'
-    ];
-    doc.text(frLines, 15, leftY);
+    doc.text(['Revaler Straße 28', '10245 Berlin', 'Germany'], 15, leftY + 5);
+  } else {
+    doc.setFont('helvetica', 'bold');
+    doc.text('Private Person', 15, leftY);
+    doc.setFont('helvetica', 'normal');
   }
 
-  // Right: Mål.nr & Datum
-  doc.setFont('helvetica', 'bold');
-  doc.text('Mål.nr', 120, 45);
+  // Date and Balance Block (Right side)
+  const rightBlockY = leftY - 5;
   doc.setFont('helvetica', 'normal');
-  doc.text(values.caseNumber || '-', pageWidth - 15, 45, { align: 'right' });
+  doc.setTextColor(100, 100, 100);
+  doc.text('Date:', pageWidth - 60, rightBlockY, { align: 'right' });
+  doc.setTextColor(50, 50, 50);
+  doc.text(formatDate(calculatedAt), pageWidth - 15, rightBlockY, { align: 'right' });
 
-  doc.setFont('helvetica', 'bold');
-  doc.text('Datum', 120, 52);
-  doc.setFont('helvetica', 'normal');
-  doc.text(formatDate(calculatedAt), pageWidth - 15, 52, { align: 'right' });
-
-  // Divider Line
-  const dividerY = Math.max(leftY + 30, 80);
-  doc.setDrawColor(200, 200, 200);
-  doc.setLineWidth(0.5);
-  doc.line(15, dividerY, pageWidth - 15, dividerY);
-
-  // --- Claim Details Block (New) ---
-  const claimDetailsYStart = dividerY + 10;
+  doc.setFillColor(245, 245, 245);
+  doc.rect(pageWidth - 90, rightBlockY + 4, 75, 8, 'F');
   
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('Kravspecifikation', 15, claimDetailsYStart);
+  const balanceDue = getBalanceDue(totals, values.balanceDueMode, values.caseType);
+  doc.text('Balance Due:', pageWidth - 60, rightBlockY + 10, { align: 'right' });
+  doc.text(formatCurrency(balanceDue, currencyStr), pageWidth - 17, rightBlockY + 10, { align: 'right' });
 
-  autoTable(doc, {
-    startY: claimDetailsYStart + 4,
-    theme: 'plain',
-    head: [],
-    body: [
-      ['Ränta på krav från:', formatDate(values.claimInterestStartDate)],
-      ['Ränta på rättegångskostnader från:', formatDate(values.legalInterestStartDate)],
-      ['Kompensation:', formatCurrency(toNumber(values.compensation), values.compensationCurrency)],
-      ['Extra utgifter:', formatCurrency(toNumber(values.extraExpenses), values.extraExpensesCurrency)],
-      ['Ränta på kapitalbelopp:', formatCurrency(totals.claimInterest, 'EUR')],
-      ['Kapitalbelopp:', formatCurrency(totals.claimAmount, 'EUR')],
-    ],
-    styles: {
-      font: 'helvetica',
-      fontSize: 9,
-      cellPadding: 3,
-    },
-    columnStyles: {
-      0: { fontStyle: 'normal', cellWidth: 70 },
-      1: { fontStyle: 'bold' },
-    },
-    didDrawCell: (data) => {
-      // Add a subtle border to the whole block like a structured info panel
-      if (data.row.index === 0 && data.column.index === 0) {
-        doc.setDrawColor(200, 200, 200);
-        doc.setLineWidth(0.5);
-      }
-    }
-  });
+  // --- Optional Claim Details ---
+  let tableStartY = Math.max(leftY + 25, 95);
+  
+  const claimData: string[][] = [];
+  const prefs = values.pdfPreferences || {};
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tableStartY = ((doc as any).lastAutoTable?.finalY ?? claimDetailsYStart + 40) + 10;
+  if (prefs.claimInterestStartDate && values.claimInterestStartDate) {
+    claimData.push(['Interest on Claim from:', formatDate(values.claimInterestStartDate)]);
+  }
+  if (prefs.legalInterestStartDate && values.legalInterestStartDate) {
+    claimData.push(['Interest on Legal Costs from:', formatDate(values.legalInterestStartDate)]);
+  }
+  if (prefs.compensation && toNumber(values.compensation) > 0) {
+    claimData.push(['Compensation:', formatCurrency(toNumber(values.compensation), values.compensationCurrency)]);
+  }
+  if (prefs.extraExpenses && toNumber(values.extraExpenses) > 0) {
+    claimData.push(['Extra Expenses:', formatCurrency(toNumber(values.extraExpenses), values.extraExpensesCurrency)]);
+  }
+  if (prefs.capitalAmount && totals.claimAmount > 0) {
+    claimData.push(['Capital Amount:', formatCurrency(totals.claimAmount, 'EUR')]);
+  }
+  if (prefs.annualInterestRate && values.annualInterestRate > 0) {
+    claimData.push(['Annual Interest Rate:', `${(values.annualInterestRate * 100).toFixed(2)}%`]);
+  }
+
+  if (claimData.length > 0) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text('Claim Specification', 15, tableStartY);
+
+    autoTable(doc, {
+      startY: tableStartY + 3,
+      theme: 'plain',
+      head: [],
+      body: claimData,
+      styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, textColor: [80, 80, 80] },
+      columnStyles: { 0: { fontStyle: 'normal', cellWidth: 60 }, 1: { fontStyle: 'bold' } },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tableStartY = ((doc as any).lastAutoTable?.finalY ?? tableStartY + 20) + 10;
+  }
 
   // --- Main Table ---
   const lineItems: Array<[string, string, string, string]> = [];
 
   if (values.caseType === 'FT') {
     const hours = toNumber(values.ftNumberOfPersons);
-    lineItems.push([
-      'Rättslig kostnad',
-      hours.toString(),
-      formatCurrency(totals.hourlyRate),
-      formatCurrency(hours * totals.hourlyRate)
-    ]);
-    lineItems.push(['Ansökningsavgift', '1', '', formatCurrency(toNumber(values.courtFee))]);
+    if (hours > 0) {
+      lineItems.push([
+        'Legal Cost',
+        hours.toString(),
+        formatCurrency(totals.hourlyRate, currencyStr),
+        formatCurrency(hours * totals.hourlyRate, currencyStr)
+      ]);
+    }
   } else {
     // OT Table
-    (Object.keys(TIME_ENTRY_LABELS) as TimeEntryKey[]).forEach((key) => {
-      const entry = values.timeEntries[key];
-      const hoursDecimal = entry.hours + entry.minutes / 60;
-      if (hoursDecimal > 0) {
+    values.lineItems.forEach((item) => {
+      const hrs = getTimeEntryHours(item.hours, item.minutes);
+      if (hrs > 0) {
+        const desc = item.tasks.flatMap(t => {
+          if (t.subTask) return [t.subTask];
+          const subs = TASK_CATEGORIES[t.category as keyof typeof TASK_CATEGORIES];
+          return subs ?? [t.category];
+        }).join(', ');
+        const dateStr = item.date ? `${formatDate(item.date)} ` : '';
         lineItems.push([
-          TIME_ENTRY_LABELS[key],
-          hoursDecimal.toString(),
-          formatCurrency(totals.hourlyRate),
-          formatCurrency(getTimeEntryTotal(entry.hours, entry.minutes, totals.hourlyRate)),
+          `${dateStr}${desc}`,
+          hrs.toFixed(2),
+          formatCurrency(totals.hourlyRate, currencyStr),
+          formatCurrency(getTimeEntryTotal(item.hours, item.minutes, totals.hourlyRate), currencyStr),
         ]);
       }
     });
 
-    if (totals.percentageFee > 0) {
+    if (values.country === 'SE' && prefs.percentageFee && totals.percentageFee > 0) {
       lineItems.push([
-        'Ombudsarvode enligt fast procentsats (45 % av kapitalbeloppet)',
+        'Fixed Percentage Fee (45% of Capital Amount)',
         '1',
-        '',
-        formatCurrency(totals.percentageFee, 'EUR'),
+        '', // Rate is empty for percentage based
+        formatCurrency(totals.percentageFee, 'EUR'), // 45% is always in EUR directly
       ]);
     }
     
-    if (toNumber(values.courtFee) > 0) {
-       lineItems.push(['Ansökningsavgift', '1', '', formatCurrency(toNumber(values.courtFee))]);
-    }
-
     if (totals.legalInterest > 0) {
-       lineItems.push(['Ränta för rättegångskostnader', '1', '', formatCurrency(totals.legalInterest)]);
+       lineItems.push(['Interest on Legal Costs', '1', '', formatCurrency(totals.legalInterest, currencyStr)]);
     }
+  }
+
+  if (prefs.courtFee && toNumber(values.courtFee) > 0) {
+    lineItems.push(['Court Fee', '1', '', formatCurrency(toNumber(values.courtFee), currencyStr)]);
   }
 
   autoTable(doc, {
     startY: tableStartY,
     theme: 'plain',
-    head: [['Post', 'Antal', 'Timpris', 'Totalt']],
+    head: [['Item', 'Quantity', 'Rate', 'Amount']],
     body: lineItems,
-    styles: {
-      font: 'helvetica',
-      fontSize: 9,
-      cellPadding: 4,
-    },
-    headStyles: {
-      fontStyle: 'bold',
-      textColor: [0, 0, 0],
-    },
+    styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, textColor: [50, 50, 50] },
+    headStyles: { fontStyle: 'bold', textColor: [255, 255, 255], fillColor: [60, 60, 60] },
     columnStyles: {
-      1: { halign: 'center', cellWidth: 20 },
+      0: { cellWidth: 90 },
+      1: { halign: 'right', cellWidth: 25 },
       2: { halign: 'right', cellWidth: 30 },
       3: { halign: 'right', cellWidth: 35 },
     },
     didDrawCell: (data) => {
-      if (data.row.section === 'body' || data.row.section === 'head') {
-        doc.setDrawColor(220, 220, 220);
+      if (data.row.section === 'body') {
+        doc.setDrawColor(240, 240, 240);
         doc.setLineWidth(0.1);
-        doc.line(
-          data.cell.x,
-          data.cell.y + data.cell.height,
-          data.cell.x + data.cell.width,
-          data.cell.y + data.cell.height
-        );
+        doc.line(data.cell.x, data.cell.y + data.cell.height, data.cell.x + data.cell.width, data.cell.y + data.cell.height);
       }
     }
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const finalY = (doc as any).lastAutoTable?.finalY ?? 120;
+  const finalY = (doc as any).lastAutoTable?.finalY ?? 150;
 
-  // --- Bottom Section ---
-  const bottomY = finalY + 15;
-
-  // Payment Method (Left)
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('BETALNINGS METOD', 15, bottomY);
+  // --- Subtotal Block (Bottom Right) ---
+  const vatLabelStr = values.country === 'FI' ? 'Tax (25%):' : `Tax (${(totals.vatRate * 100).toFixed(0)}%):`;
   
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  const paymentLines = [
-    'Danske Bank',
-    'Account Holder: Flyhjælpe ApS',
-    'IBAN: DK38 3000 3002 0796 58',
-    'BIC/SWIFT: DABADKKK',
-    `Ref. ${values.internalReference || '-'}`
-  ];
-  doc.text(paymentLines, 15, bottomY + 6);
-
-  // Totals (Right)
   autoTable(doc, {
-    startY: bottomY - 5,
+    startY: finalY + 10,
     margin: { left: 120 },
     theme: 'plain',
     body: [
-      ['Delsumma', formatCurrency(totals.subtotal)],
-      [`Moms (${(totals.vatRate * 100).toFixed(0)}%)`, formatCurrency(totals.vatAmount)],
-      ['Totalt', formatCurrency(totals.total)],
+      ['Subtotal:', formatCurrency(totals.subtotal, currencyStr)],
+      [vatLabelStr, formatCurrency(totals.vatAmount, currencyStr)],
+      ['Total:', formatCurrency(totals.total, currencyStr)],
     ],
-    styles: {
-      font: 'helvetica',
-      fontSize: 10,
-      cellPadding: 3,
-    },
-    columnStyles: {
-      0: { fontStyle: 'bold', cellWidth: 40 },
-      1: { halign: 'right', cellWidth: 35 },
-    },
-    didDrawCell: (data) => {
-      if (data.row.index === 1 && data.column.index === 0) {
-        doc.setDrawColor(0, 0, 0);
-        doc.setLineWidth(0.5);
-        doc.line(
-          data.cell.x,
-          data.cell.y + data.cell.height,
-          data.cell.x + 75,
-          data.cell.y + data.cell.height
-        );
-      }
-    },
+    styles: { font: 'helvetica', fontSize: 9, cellPadding: 3, textColor: [80, 80, 80] },
+    columnStyles: { 0: { halign: 'right', cellWidth: 30 }, 1: { halign: 'right', cellWidth: 35, textColor: [50, 50, 50] } },
     didParseCell(data) {
       if (data.row.index === 2) {
         data.cell.styles.fontStyle = 'bold';
@@ -244,17 +219,14 @@ export function generateCostReportPdf(
     },
   });
 
-  // --- Footer ---
-  const footerHeight = 15;
-  doc.setFillColor(41, 153, 204);
-  doc.rect(0, pageHeight - footerHeight, pageWidth, footerHeight, 'F');
-  
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(8);
+  // --- Payment Method Overlay (Bottom Left/Center) ---
+  const paymentY = pageHeight - 40;
   doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(150, 150, 150);
   
-  const footerText = 'bogholderi@flyhjaelp.dk   |   +46 31 308 88   |   Flyghjälp / Flyhjælp ApS - Holmbladsgade 133 - 2300 Köpenhamn, Danmark - Org.nr: 36917490';
-  doc.text(footerText, pageWidth / 2, pageHeight - 6, { align: 'center' });
+  const paymentText = `Danske Bank\nAccount Holder: Flyhjælpe ApS\nIBAN: DK38 3000 3002 0796 58\nBIC/SWIFT: DABADKKK\nRef. ${values.internalReference || '-'}`;
+  doc.text(paymentText, 15, paymentY);
 
-  doc.save(`kostnadsrapport-${values.caseNumber || 'arende'}.pdf`);
+  doc.save(`invoice-${values.caseNumber || 'lexbill'}.pdf`);
 }

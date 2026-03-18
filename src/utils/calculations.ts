@@ -1,20 +1,25 @@
 import {
   DEFAULT_ANNUAL_INTEREST_RATE,
-  TIME_ENTRY_LABELS,
+  EUR_HOURLY_RATE,
+  SEK_HOURLY_RATE,
 } from '../constants';
 import type {
+  BalanceDueMode,
   CaseFormValues,
+  CaseType,
+  Country,
+  LineItem,
   PartyType,
-  TimeEntryKey,
   TotalsSnapshot,
 } from '../types';
 import { roundCurrency, toNumber } from './format';
 
-export function getHourlyRate(partyType: PartyType): number {
-  return 1586;
+export function getHourlyRate(country: Country): number {
+  return country === 'SE' ? SEK_HOURLY_RATE : EUR_HOURLY_RATE;
 }
 
-export function getVatRate(partyType: PartyType): number {
+export function getVatRate(country: Country, partyType: PartyType): number {
+  if (country === 'FI') return 0.25; // Displays as 25% but calculated amount is 0
   return partyType === 'FR' ? 0 : 0.25;
 }
 
@@ -79,33 +84,30 @@ export function getCalculatedTotals(
     legalInterest?: number;
   },
 ): TotalsSnapshot {
-  const hourlyRate = getHourlyRate(values.partyType);
-  const vatRate = getVatRate(values.partyType);
+  const hourlyRate = getHourlyRate(values.country);
+  const vatRate = getVatRate(values.country, values.partyType);
   
   const claimAmountEur = getClaimAmountEur(values);
   
   const compSek = values.compensationCurrency === 'SEK' ? toNumber(values.compensation) : toNumber(values.compensation) / (values.exchangeRateSekToEur || 1);
   const extraSek = values.extraExpensesCurrency === 'SEK' ? toNumber(values.extraExpenses) : toNumber(values.extraExpenses) / (values.exchangeRateSekToEur || 1);
-  const claimAmountSek = roundCurrency(compSek + extraSek); // Used for legacy subtotal base logic
+  const claimAmountSek = roundCurrency(compSek + extraSek);
 
-  const timeEntriesTotalSek = (Object.keys(TIME_ENTRY_LABELS) as TimeEntryKey[]).reduce(
-    (sum, key) =>
-      sum +
-      getTimeEntryTotal(
-        values.timeEntries[key].hours,
-        values.timeEntries[key].minutes,
-        hourlyRate,
-      ),
+  const timeEntriesTotalSek = values.lineItems.reduce(
+    (sum, item) => sum + getTimeEntryTotal(item.hours, item.minutes, hourlyRate),
     0,
   );
 
-  const percentageFeeEur = values.caseType === 'OT' ? getOtPercentageFeeEur(claimAmountEur) : 0;
+  let percentageFeeEur = 0;
+  if (values.caseType === 'OT' && values.country === 'SE') {
+    percentageFeeEur = getOtPercentageFeeEur(claimAmountEur);
+  }
   const percentageFeeSek = getOtPercentageFeeSek(percentageFeeEur, values.exchangeRateSekToEur);
   
   const claimInterestEur = options?.claimInterest ?? 0;
   const legalInterestSek = options?.legalInterest ?? 0;
   
-  const ftLegalCostSek = toNumber(values.ftNumberOfPersons) * 1586;
+  const ftLegalCostSek = toNumber(values.ftNumberOfPersons) * hourlyRate;
   const legalCostBaseSek =
     values.caseType === 'FT'
       ? roundCurrency(ftLegalCostSek + toNumber(values.courtFee))
@@ -117,14 +119,26 @@ export function getCalculatedTotals(
       : roundCurrency(timeEntriesTotalSek + percentageFeeSek + toNumber(values.courtFee));
 
   const vatBaseSek = values.caseType === 'FT' ? ftLegalCostSek : roundCurrency(timeEntriesTotalSek + percentageFeeSek);
-  const vatAmountSek = roundCurrency(vatBaseSek * vatRate);
+  
+  // Finnish VAT amount is always 0
+  const vatAmountSek = values.country === 'FI' ? 0 : roundCurrency(vatBaseSek * vatRate);
   
   // The grand total still aggregates everything. The total reflects the strict subtotal + vat.
   const totalSek = roundCurrency(subtotalSek + vatAmountSek);
   
-  const grandTotalSek = values.caseType === 'FT'
-    ? roundCurrency(claimAmountSek + totalSek + (claimInterestEur / (values.exchangeRateSekToEur || 1)))
-    : roundCurrency(claimAmountSek + legalInterestSek + totalSek + (claimInterestEur / (values.exchangeRateSekToEur || 1)));
+  let grandTotal: number;
+  if (values.country === 'FI') {
+    // FI: hourlyRate is EUR so totalSek/legalInterestSek are already EUR
+    grandTotal = values.caseType === 'FT'
+      ? roundCurrency(claimAmountEur + claimInterestEur + totalSek)
+      : roundCurrency(claimAmountEur + claimInterestEur + legalInterestSek + totalSek);
+  } else {
+    // SE: convert EUR-denominated values to SEK before summing
+    const claimInterestSek = roundCurrency(claimInterestEur / (values.exchangeRateSekToEur || 1));
+    grandTotal = values.caseType === 'FT'
+      ? roundCurrency(claimAmountSek + claimInterestSek + totalSek)
+      : roundCurrency(claimAmountSek + claimInterestSek + legalInterestSek + totalSek);
+  }
 
   return {
     hourlyRate,
@@ -138,35 +152,39 @@ export function getCalculatedTotals(
     total: totalSek,
     claimInterest: claimInterestEur,
     legalInterest: legalInterestSek,
-    grandTotal: grandTotalSek,
+    grandTotal,
   };
 }
 
+export function getBalanceDue(totals: TotalsSnapshot, mode: BalanceDueMode, caseType: CaseType): number {
+  if (mode === 'FULL_AMOUNT') return totals.grandTotal;
+  return caseType === 'FT'
+    ? totals.total
+    : roundCurrency(totals.total + totals.legalInterest);
+}
+
 export function buildLegalCostPrincipal(values: CaseFormValues): number {
-  const vatRate = getVatRate(values.partyType);
+  const vatRate = getVatRate(values.country, values.partyType);
+  const hourlyRate = getHourlyRate(values.country);
 
   if (values.caseType === 'FT') {
-    const ftCost = toNumber(values.ftNumberOfPersons) * 1586;
-    const vatAmount = roundCurrency(ftCost * vatRate);
+    const ftCost = toNumber(values.ftNumberOfPersons) * hourlyRate;
+    const vatAmount = values.country === 'FI' ? 0 : roundCurrency(ftCost * vatRate);
     return roundCurrency(ftCost + vatAmount + toNumber(values.courtFee));
   }
 
-  const hourlyRate = getHourlyRate(values.partyType);
-  const timeEntriesTotalSek = (Object.keys(TIME_ENTRY_LABELS) as TimeEntryKey[]).reduce(
-    (sum, key) =>
-      sum +
-      getTimeEntryTotal(
-        values.timeEntries[key].hours,
-        values.timeEntries[key].minutes,
-        hourlyRate,
-      ),
+  const timeEntriesTotalSek = values.lineItems.reduce(
+    (sum, item) => sum + getTimeEntryTotal(item.hours, item.minutes, hourlyRate),
     0,
   );
 
-  const percentageFeeEur = getOtPercentageFeeEur(getClaimAmountEur(values));
+  let percentageFeeEur = 0;
+  if (values.country === 'SE') {
+    percentageFeeEur = getOtPercentageFeeEur(getClaimAmountEur(values));
+  }
   const percentageFeeSek = getOtPercentageFeeSek(percentageFeeEur, values.exchangeRateSekToEur);
   
-  const vatAmountSek = roundCurrency((timeEntriesTotalSek + percentageFeeSek) * vatRate);
+  const vatAmountSek = values.country === 'FI' ? 0 : roundCurrency((timeEntriesTotalSek + percentageFeeSek) * vatRate);
 
   return roundCurrency(timeEntriesTotalSek + percentageFeeSek + vatAmountSek + toNumber(values.courtFee));
 }

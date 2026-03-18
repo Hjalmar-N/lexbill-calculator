@@ -1,12 +1,17 @@
+export type Country = 'SE' | 'FI';
 export type PartyType = 'PRIVATE_PERSON' | 'FR';
 export type CaseType = 'FT' | 'OT';
+export type BalanceDueMode = 'LEGAL_COSTS_ONLY' | 'FULL_AMOUNT';
 
-export type TimeEntryKey =
-  | 'analysis'
-  | 'communication'
-  | 'response';
+export interface LineItemTask {
+  category: string;
+  subTask?: string;
+}
 
-export interface TimeEntryFormValue {
+export interface LineItem {
+  id?: string;
+  tasks: LineItemTask[];
+  date: string;
   hours: number;
   minutes: number;
 }
@@ -14,6 +19,7 @@ export interface TimeEntryFormValue {
 export interface CaseFormValues {
   caseNumber: string;
   internalReference: string;
+  country: Country;
   partyType: PartyType;
   caseType: CaseType;
   compensation: number | '';
@@ -26,7 +32,9 @@ export interface CaseFormValues {
   compensationCurrency: 'EUR' | 'SEK';
   extraExpensesCurrency: 'EUR' | 'SEK';
   exchangeRateSekToEur: number;
-  timeEntries: Record<TimeEntryKey, TimeEntryFormValue>;
+  balanceDueMode: BalanceDueMode;
+  lineItems: LineItem[];
+  pdfPreferences: Record<string, boolean>;
 }
 
 export interface TotalsSnapshot {

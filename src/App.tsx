@@ -1,21 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Controller, useForm, useWatch } from 'react-hook-form';
+import { Controller, useForm, useWatch, useFieldArray } from 'react-hook-form';
 import {
   DEFAULT_ANNUAL_INTEREST_RATE,
   DEFAULT_FORM_VALUES,
-  HOUR_OPTIONS,
-  MINUTE_OPTIONS,
-  TIME_ENTRY_LABELS,
 } from './constants';
-import type { CaseFormValues, SavedCase, TimeEntryKey, TotalsSnapshot } from './types';
+import type { CaseFormValues, SavedCase, TotalsSnapshot } from './types';
 import {
   buildLegalCostPrincipal,
+  getBalanceDue,
   getCalculatedTotals,
   getClaimAmountEur,
   getHourlyRate,
   getInterestAmount,
-  getTimeEntryHours,
-  getTimeEntryTotal,
   getVatRate,
 } from './utils/calculations';
 import { formatCurrency, formatDate } from './utils/format';
@@ -23,29 +19,20 @@ import { generateCostReportPdf } from './utils/pdf';
 import { loadSavedCases, saveCaseToStorage } from './utils/storage';
 import { signOut } from 'firebase/auth';
 import { auth } from './utils/firebase';
+import { LineItemRow } from './components/LineItemRow';
 
-type WatchedFormValues = Partial<Omit<CaseFormValues, 'timeEntries'>> & {
-  timeEntries?: Partial<Record<TimeEntryKey, Partial<CaseFormValues['timeEntries'][TimeEntryKey]>>>;
-};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type WatchedFormValues = any;
 
 function normalizeFormValues(partial?: WatchedFormValues): CaseFormValues {
   return {
     ...DEFAULT_FORM_VALUES,
     ...partial,
-    timeEntries: {
-      analysis: {
-        ...DEFAULT_FORM_VALUES.timeEntries.analysis,
-        ...partial?.timeEntries?.analysis,
-      },
-      communication: {
-        ...DEFAULT_FORM_VALUES.timeEntries.communication,
-        ...partial?.timeEntries?.communication,
-      },
-      response: {
-        ...DEFAULT_FORM_VALUES.timeEntries.response,
-        ...partial?.timeEntries?.response,
-      },
-    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    lineItems: (partial?.lineItems || []).map((item: any) => ({
+      ...item,
+      tasks: item?.tasks || [],
+    })),
   };
 }
 
@@ -60,11 +47,14 @@ function App() {
     defaultValues: DEFAULT_FORM_VALUES,
   });
 
-const watchedValues = useWatch({ control });
+  const { fields, append: appendLineItem, remove: removeLineItem } = useFieldArray({
+    control,
+    name: 'lineItems',
+  });
+
+  const watchedValues = useWatch({ control });
   const values = normalizeFormValues(watchedValues);
   
-  const exchangeRate = values.exchangeRateSekToEur || 0.088;
-
   useEffect(() => {
     setSavedCases(loadSavedCases());
   }, []);
@@ -84,24 +74,16 @@ const watchedValues = useWatch({ control });
       formValues.annualInterestRate,
       formValues.claimInterestStartDate,
     );
-
     const legalInterest = getInterestAmount(
       buildLegalCostPrincipal(formValues),
       formValues.annualInterestRate,
       formValues.legalInterestStartDate,
     );
-
-    const totals = getCalculatedTotals(formValues, {
-      claimInterest,
-      legalInterest,
-    });
+    const totals = getCalculatedTotals(formValues, { claimInterest, legalInterest });
 
     const calculatedAt = new Date().toISOString();
     const savedCase: SavedCase = {
-      form: {
-        ...formValues,
-        ftNumberOfPersons: formValues.caseType === 'FT' ? formValues.ftNumberOfPersons : '',
-      },
+      form: { ...formValues, ftNumberOfPersons: formValues.caseType === 'FT' ? formValues.ftNumberOfPersons : '' },
       calculatedAt,
       annualInterestRate: formValues.annualInterestRate,
       totals,
@@ -115,380 +97,235 @@ const watchedValues = useWatch({ control });
 
   const loadCase = (caseKey: string) => {
     const saved = savedCases[caseKey];
-    if (!saved) {
-      return;
-    }
-
+    if (!saved) return;
     reset(saved.form);
     setPersistedTotals(saved.totals);
     setLastSavedAt(saved.calculatedAt);
   };
 
-  const currentHourlyRate = getHourlyRate(values.partyType);
-  const currentVatRate = getVatRate(values.partyType);
+  const currCurrency = values.country === 'FI' ? 'EUR' : 'SEK';
 
   return (
-    <div className="app-shell">
-      <main className="page">
-        <section className="hero-card">
-          <div>
-            <p className="eyebrow">Legal Claim Calculator</p>
-            <h1>LexBill kostnadsräkning</h1>
-            <p className="hero-copy">
-              Beräkna yrkanden, rättsliga kostnader, ränta och skapa en PDF-rapport i svensk
-              kostnadsräkningsstil.
-            </p>
+    <div className="invoice-builder-wrapper">
+      <div className="top-bar-actions">
+        <button type="button" className="btn btn-danger" onClick={() => signOut(auth)}>Log Out</button>
+        <button type="button" className="btn btn-secondary" onClick={() => generateCostReportPdf(values, liveTotals, lastSavedAt || new Date().toISOString())}>
+          Generate PDF
+        </button>
+        <button type="button" className="btn btn-primary" onClick={handleSubmit(onSave)}>
+          Save Progress
+        </button>
+      </div>
+
+      <form className="invoice-paper" onSubmit={handleSubmit(onSave)}>
+        
+        {/* --- Header Row --- */}
+        <div className="invoice-row">
+          <div className="header-left">
+            <h1 style={{ marginBottom: '24px' }}>LexBill</h1>
+            
+            <div className="meta-grid" style={{ marginBottom: '24px' }}>
+              <label>Country Domain</label>
+              <div className="country-radio-group">
+                <label><input type="radio" value="SE" {...register('country')} /> Sweden (SE)</label>
+                <label><input type="radio" value="FI" {...register('country')} /> Finland (FI)</label>
+              </div>
+
+              <label>Bill To (Party)</label>
+              <select {...register('partyType')}>
+                <option value="PRIVATE_PERSON">Private Person</option>
+                <option value="FR">FR (Flightright GmbH)</option>
+              </select>
+
+              <label>Who is this from?</label>
+              <input {...register('internalReference')} placeholder="Internal Reference (LEX-2026-001)" />
+            </div>
           </div>
-          <div className="hero-meta">
-            <span>Timkostnad: {formatCurrency(currentHourlyRate)}</span>
-            <span>Moms: {(currentVatRate * 100).toFixed(0)}%</span>
-            <span>Räntesats: {((values.annualInterestRate || 0) * 100).toFixed(2)}%</span>
-            <span>EUR Kurs: {exchangeRate.toFixed(4)}</span>
-            <button 
-              type="button" 
-              onClick={() => signOut(auth)}
-              style={{
-                background: 'transparent',
-                border: '1px solid rgba(255,255,255,0.2)',
-                color: '#fff',
-                padding: '4px 12px',
-                borderRadius: '6px',
-                marginTop: '8px',
-                cursor: 'pointer',
-                fontSize: '0.85rem'
-              }}
-            >
-              Logga ut
+          
+          <div className="header-right">
+            <h2 className="title-text">INVOICE</h2>
+            <div className="meta-grid">
+              <label>Invoice #</label>
+              <input {...register('caseNumber')} placeholder="T 1234-26" />
+              
+              <label>Date Saved</label>
+              <output className="readonly-output" style={{ background: 'transparent', border: 'none', paddingLeft: 0 }}>
+                {lastSavedAt ? formatDate(lastSavedAt) : 'Unsaved'}
+              </output>
+
+              <label>Case Type</label>
+              <select {...register('caseType')}>
+                <option value="FT">FT</option>
+                <option value="OT">OT</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* --- Claim Details block --- */}
+        <div className="claim-section">
+          <h3 className="section-title">Claim Parameters & Settings</h3>
+          <div className="claim-grid">
+            <div className="claim-group">
+              <label>Compensation</label>
+              <div className="combined-input">
+                <input type="number" step="0.01" placeholder="0" {...register('compensation', { setValueAs: (v) => (v === '' ? '' : Number(v)) })} />
+                <select {...register('compensationCurrency')}><option value="EUR">EUR</option><option value="SEK">SEK</option></select>
+              </div>
+              <div className="pdf-toggle">
+                <input id="pdf-comp" type="checkbox" {...register('pdfPreferences.compensation')} />
+                <label htmlFor="pdf-comp">Show on PDF</label>
+              </div>
+            </div>
+
+            <div className="claim-group">
+              <label>Extra Expenses</label>
+              <div className="combined-input">
+                <input type="number" step="0.01" placeholder="0" {...register('extraExpenses', { setValueAs: (v) => (v === '' ? '' : Number(v)) })} />
+                <select {...register('extraExpensesCurrency')}><option value="EUR">EUR</option><option value="SEK">SEK</option></select>
+              </div>
+              <div className="pdf-toggle">
+                <input id="pdf-extra" type="checkbox" {...register('pdfPreferences.extraExpenses')} />
+                <label htmlFor="pdf-extra">Show on PDF</label>
+              </div>
+            </div>
+
+            <div className="claim-group">
+              <label>Capital Amount</label>
+              <output className="readonly-output">{formatCurrency(liveTotals.claimAmount, 'EUR')}</output>
+              <div className="pdf-toggle">
+                <input id="pdf-cap" type="checkbox" {...register('pdfPreferences.capitalAmount')} />
+                <label htmlFor="pdf-cap">Show on PDF</label>
+              </div>
+            </div>
+
+            <div className="claim-group">
+              <label>Court Fee</label>
+              <input type="number" step="0.01" placeholder="0" {...register('courtFee', { setValueAs: (v) => (v === '' ? '' : Number(v)) })} />
+              <div className="pdf-toggle">
+                <input id="pdf-court" type="checkbox" {...register('pdfPreferences.courtFee')} />
+                <label htmlFor="pdf-court">Show on PDF</label>
+              </div>
+            </div>
+
+            <div className="claim-group">
+              <label>Annual Interest Rate</label>
+              <input type="number" step="0.01" {...register('annualInterestRate', { setValueAs: (v) => (v === '' ? '' : Number(v)) })} />
+              <div className="pdf-toggle">
+                <input id="pdf-int" type="checkbox" {...register('pdfPreferences.annualInterestRate')} />
+                <label htmlFor="pdf-int">Show on PDF</label>
+              </div>
+            </div>
+
+            <div className="claim-group">
+              <label>SEK to EUR Rate</label>
+              <input type="number" step="0.0001" {...register('exchangeRateSekToEur', { setValueAs: (v) => (v === '' ? '' : Number(v)) })} />
+            </div>
+
+            <div className="claim-group">
+              <label>Interest Start (Claim)</label>
+              <input type="date" {...register('claimInterestStartDate')} />
+              <div className="pdf-toggle">
+                <input id="pdf-claim-start" type="checkbox" {...register('pdfPreferences.claimInterestStartDate')} />
+                <label htmlFor="pdf-claim-start">Show on PDF</label>
+              </div>
+            </div>
+
+            <div className="claim-group">
+              <label>Interest Start (Legal Costs)</label>
+              <input type="date" {...register('legalInterestStartDate')} />
+              <div className="pdf-toggle">
+                <input id="pdf-legal-start" type="checkbox" {...register('pdfPreferences.legalInterestStartDate')} />
+                <label htmlFor="pdf-legal-start">Show on PDF</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* --- Line Items Table --- */}
+        {values.caseType === 'OT' ? (
+          <div className="line-items-section">
+            <div className="table-header">
+              <div>Item</div>
+              <div>Hrs</div>
+              <div>Mins</div>
+              <div></div>
+            </div>
+            {fields.map((field, index) => (
+              <LineItemRow
+                key={field.id}
+                control={control}
+                index={index}
+                remove={removeLineItem}
+              />
+            ))}
+            <button type="button" className="add-line-btn" onClick={() => appendLineItem({ tasks: [], date: new Date().toISOString().split('T')[0], hours: 0, minutes: 0 })}>
+              + Line Item
             </button>
           </div>
-        </section>
+        ) : (
+          <div className="line-items-section" style={{ maxWidth: '400px' }}>
+            <h3 className="section-title">FT Legal Costs</h3>
+            <div className="claim-group">
+              <label>Number of Persons</label>
+              <input type="number" step="1" placeholder="0" {...register('ftNumberOfPersons', { setValueAs: (v) => (v === '' ? '' : Number(v)) })} />
+            </div>
+          </div>
+        )}
 
-        <div className="content-grid">
-          <form className="form-panel" onSubmit={handleSubmit(onSave)}>
-            <section className="panel">
-              <div className="section-heading">
-                <h2>Ärende</h2>
-                <p>Grunduppgifter för målet och vilket regelverk som ska tillämpas.</p>
-              </div>
-              <div className="grid two">
-                <label>
-                  <span>Mål.nr</span>
-                  <input {...register('caseNumber')} placeholder="T 1234-26" />
-                </label>
-                <label>
-                  <span>Internt referensnummer</span>
-                  <input {...register('internalReference')} placeholder="LEX-2026-001" />
-                </label>
-                <label>
-                  <span>Partstyp</span>
-                  <select {...register('partyType')}>
-                    <option value="PRIVATE_PERSON">Private person</option>
-                    <option value="FR">FR (Flightright)</option>
-                  </select>
-                </label>
-                <label>
-                  <span>Ärendetyp</span>
-                  <select {...register('caseType')}>
-                    <option value="FT">FT</option>
-                    <option value="OT">OT</option>
-                  </select>
-                </label>
-              </div>
-            </section>
-
-            <section className="panel">
-              <div className="section-heading">
-                <h2>Fordran</h2>
-                <p>Tomma fält räknas automatiskt som 0.</p>
-              </div>
-              <div className="grid two">
-                <label>
-                  <span>Kompensation</span>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <input
-                      type="number"
-                      step="0.01"
-                      {...register('compensation', { setValueAs: (value) => (value === '' ? '' : Number(value)) })}
-                      placeholder="0"
-                      style={{ flex: 1 }}
-                    />
-                    <select {...register('compensationCurrency')} style={{ width: '90px' }}>
-                      <option value="EUR">EUR</option>
-                      <option value="SEK">SEK</option>
-                    </select>
-                  </div>
-                </label>
-                <label>
-                  <span>Extra utgifter</span>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <input
-                      type="number"
-                      step="0.01"
-                      {...register('extraExpenses', { setValueAs: (value) => (value === '' ? '' : Number(value)) })}
-                      placeholder="0"
-                      style={{ flex: 1 }}
-                    />
-                    <select {...register('extraExpensesCurrency')} style={{ width: '90px' }}>
-                      <option value="EUR">EUR</option>
-                      <option value="SEK">SEK</option>
-                    </select>
-                  </div>
-                </label>
-                <label className="readonly-field">
-                  <span>Kapitalbelopp</span>
-                  <output>{formatCurrency(liveTotals.claimAmount, 'EUR')}</output>
-                </label>
-                <label>
-                  <span>Ansökningsavgift</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    {...register('courtFee', { setValueAs: (value) => (value === '' ? '' : Number(value)) })}
-                    placeholder="0"
-                  />
-                </label>
-                <label>
-                  <span>Årlig räntesats (decimalform)</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    {...register('annualInterestRate', { setValueAs: (value) => (value === '' ? '' : Number(value)) })}
-                  />
-                </label>
-                <label>
-                  <span>SEK till EUR Växelkurs</span>
-                  <input
-                    type="number"
-                    step="0.0001"
-                    {...register('exchangeRateSekToEur', { setValueAs: (value) => (value === '' ? '' : Number(value)) })}
-                  />
-                </label>
-                <label>
-                  <span>Ränta startdatum för fordran</span>
-                  <input type="date" {...register('claimInterestStartDate')} />
-                </label>
-                <label>
-                  <span>
-                    Ränta startdatum för{' '}
-                    {values.caseType === 'FT' ? 'legal cost + court fee' : 'legal costs'}
+        {/* --- Footer Row --- */}
+        <div className="invoice-row" style={{ marginTop: '20px' }}>
+          <div className="footer-left">
+            <div className="saved-cases-block">
+              <label>Load Saved Case</label>
+              <select defaultValue="" onChange={(e) => { if (e.target.value) loadCase(e.target.value); }}>
+                <option value="">Select saved case to load...</option>
+                {Object.keys(savedCases).map((key) => <option key={key} value={key}>{key}</option>)}
+              </select>
+            </div>
+          </div>
+          
+          <div className="footer-right">
+            <div className="totals-grid">
+              <span>Time Fee Total</span>
+              <span>{formatCurrency(liveTotals.timeEntriesTotal, currCurrency)}</span>
+              
+              {values.country === 'SE' && (
+                <>
+                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px' }}>
+                    <input type="checkbox" id="pdf-perc" style={{width: 12}} {...register('pdfPreferences.percentageFee')} /> 
+                    <label htmlFor="pdf-perc" style={{fontSize: '0.75rem', color: '#888'}}>PDF</label>
+                    Fixed Percentage Fee
                   </span>
-                  <input type="date" {...register('legalInterestStartDate')} />
-                </label>
-              </div>
-            </section>
-
-            {values.caseType === 'FT' ? (
-              <section className="panel">
-                <div className="section-heading">
-                  <h2>FT-kostnader</h2>
-                  <p>Beräknas automatiskt (1586 kr + moms × antal personer/timmar).</p>
-                </div>
-                <div className="grid one">
-                  <label>
-                    <span>Antal personer</span>
-                    <input
-                      type="number"
-                      step="1"
-                      {...register('ftNumberOfPersons', { setValueAs: (value) => (value === '' ? '' : Number(value)) })}
-                      placeholder="0"
-                    />
-                  </label>
-                </div>
-              </section>
-            ) : (
-              <section className="panel">
-                <div className="section-heading">
-                  <h2>OT-kostnader</h2>
-                  <p>Tidsposter med automatiskt timpris och separat procentsatsrad.</p>
-                </div>
-                <div className="time-entry-table">
-                  <div className="time-entry header">
-                    <span>Post</span>
-                    <span>Timmar</span>
-                    <span>Minuter</span>
-                    <span>Timpris</span>
-                    <span>Belopp</span>
-                  </div>
-                  {(Object.keys(TIME_ENTRY_LABELS) as TimeEntryKey[]).map((key) => {
-                    const entry = values.timeEntries[key];
-                    const rowTotal = getTimeEntryTotal(entry.hours, entry.minutes, currentHourlyRate);
-
-                    return (
-                      <div className="time-entry" key={key}>
-                        <span>{TIME_ENTRY_LABELS[key]}</span>
-                        <Controller
-                          control={control}
-                          name={`timeEntries.${key}.hours`}
-                          render={({ field }) => (
-                            <select
-                              value={field.value}
-                              onChange={(event) => field.onChange(Number(event.target.value))}
-                            >
-                              {HOUR_OPTIONS.map((hour) => (
-                                <option key={hour} value={hour}>
-                                  {hour}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                        />
-                        <Controller
-                          control={control}
-                          name={`timeEntries.${key}.minutes`}
-                          render={({ field }) => (
-                            <select
-                              value={field.value}
-                              onChange={(event) => field.onChange(Number(event.target.value))}
-                            >
-                              {MINUTE_OPTIONS.map((minute) => (
-                                <option key={minute} value={minute}>
-                                  {minute}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                        />
-                        <span>{formatCurrency(currentHourlyRate)}</span>
-                        <strong>{formatCurrency(rowTotal)}</strong>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="grid two compact-top">
-                  <label className="readonly-field">
-                    <span>Ombudsarvode enligt fast procentsats</span>
-                    <output>{formatCurrency(liveTotals.percentageFee, 'EUR')}</output>
-                  </label>
-                  <label className="readonly-field">
-                    <span>Tidsarvode</span>
-                    <output>{formatCurrency(liveTotals.timeEntriesTotal)}</output>
-                  </label>
-                </div>
-              </section>
-            )}
-
-            <section className="panel action-row">
-              <div className="saved-cases">
-                <label>
-                  <span>Sparade ärenden</span>
-                  <select
-                    defaultValue=""
-                    onChange={(event) => {
-                      if (event.target.value) {
-                        loadCase(event.target.value);
-                      }
-                    }}
-                  >
-                    <option value="">Välj sparat ärende</option>
-                    {Object.keys(savedCases).map((caseKey) => (
-                      <option key={caseKey} value={caseKey}>
-                        {caseKey}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="button-row">
-                <button type="submit" className="primary-button">
-                  Save
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() =>
-                    generateCostReportPdf(
-                      values,
-                      liveTotals,
-                      lastSavedAt || new Date().toISOString(),
-                    )
-                  }
-                >
-                  Generate PDF
-                </button>
-              </div>
-            </section>
-          </form>
-
-          <aside className="summary-panel">
-            <section className="panel sticky">
-              <div className="section-heading">
-                <h2>Live Summary</h2>
-                <p>Ränta uppdateras när du klickar på Save.</p>
-              </div>
-
-              <dl className="summary-list">
-                <div>
-                  <dt>Mål.nr</dt>
-                  <dd>{values.caseNumber || '-'}</dd>
-                </div>
-                <div>
-                  <dt>Referens</dt>
-                  <dd>{values.internalReference || '-'}</dd>
-                </div>
-                <div>
-                  <dt>Partstyp</dt>
-                  <dd>{values.partyType === 'FR' ? 'FR' : 'Private person'}</dd>
-                </div>
-                <div>
-                  <dt>Ärendetyp</dt>
-                  <dd>{values.caseType}</dd>
-                </div>
-                <div>
-                  <dt>Kapitalbelopp</dt>
-                  <dd>{formatCurrency(liveTotals.claimAmount, 'EUR')}</dd>
-                </div>
-                <div>
-                  <dt>Timkostnad</dt>
-                  <dd>{formatCurrency(liveTotals.hourlyRate)}</dd>
-                </div>
-                <div>
-                  <dt>Moms</dt>
-                  <dd>{formatCurrency(liveTotals.vatAmount)}</dd>
-                </div>
-                <div>
-                  <dt>Ränta på fordran</dt>
-                  <dd>{formatCurrency(liveTotals.claimInterest)}</dd>
-                </div>
-                <div>
-                  <dt>Ränta på kostnader</dt>
-                  <dd>{formatCurrency(liveTotals.legalInterest)}</dd>
-                </div>
-              </dl>
-
-              {values.caseType === 'OT' && (
-                <div className="ot-breakdown">
-                  <h3>OT-underlag</h3>
-                  {(Object.keys(TIME_ENTRY_LABELS) as TimeEntryKey[]).map((key) => {
-                    const entry = values.timeEntries[key];
-                    return (
-                      <div key={key} className="mini-row">
-                        <span>{TIME_ENTRY_LABELS[key]}</span>
-                        <span>
-                          {getTimeEntryHours(entry.hours, entry.minutes).toFixed(2)} h /{' '}
-                          {formatCurrency(
-                            getTimeEntryTotal(entry.hours, entry.minutes, liveTotals.hourlyRate),
-                          )}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  <div className="mini-row emphasis">
-                    <span>45% procentsats</span>
-                    <span>{formatCurrency(liveTotals.percentageFee, 'EUR')}</span>
-                  </div>
-                </div>
+                  <span>{formatCurrency(liveTotals.percentageFee, 'EUR')}</span>
+                </>
               )}
 
-              <div className="total-card">
-                <span>Totalt att yrka</span>
-                <strong>{formatCurrency(liveTotals.grandTotal)}</strong>
-                <small>Senast sparad: {lastSavedAt ? formatDate(lastSavedAt) : 'Inte sparad än'}</small>
-              </div>
-            </section>
-          </aside>
+              <span>Subtotal</span>
+              <span>{formatCurrency(liveTotals.subtotal, currCurrency)}</span>
+
+              <span>Tax</span>
+              <span>{formatCurrency(liveTotals.vatAmount, currCurrency)}</span>
+
+              <span>Interest on Claim</span>
+              <span>{formatCurrency(liveTotals.claimInterest, 'EUR')}</span>
+
+              <span>Interest on External Costs</span>
+              <span>{formatCurrency(liveTotals.legalInterest, currCurrency)}</span>
+
+              <span className="balance-due-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                Balance Due
+                <select {...register('balanceDueMode')} style={{ fontSize: '0.7rem', padding: '1px 4px' }}>
+                  <option value="LEGAL_COSTS_ONLY">Legal Costs Only</option>
+                  <option value="FULL_AMOUNT">Full Amount</option>
+                </select>
+              </span>
+              <span className="balance-due-val">{formatCurrency(getBalanceDue(liveTotals, values.balanceDueMode, values.caseType), currCurrency)}</span>
+            </div>
+          </div>
         </div>
-      </main>
+
+      </form>
     </div>
   );
 }
