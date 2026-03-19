@@ -53,7 +53,7 @@ function App() {
     defaultValues: DEFAULT_FORM_VALUES,
   });
 
-  const { fields, append: appendLineItem, remove: removeLineItem } = useFieldArray({
+  const { fields, append: appendLineItem, remove: removeLineItem, swap: swapLineItem } = useFieldArray({
     control,
     name: 'lineItems',
   });
@@ -293,6 +293,8 @@ function App() {
                 control={control}
                 index={index}
                 remove={removeLineItem}
+                totalItems={fields.length}
+                swapItems={swapLineItem}
               />
             ))}
             <button type="button" className="add-line-btn" onClick={() => appendLineItem({ tasks: [], date: new Date().toISOString().split('T')[0], hours: 0, minutes: 0 })}>

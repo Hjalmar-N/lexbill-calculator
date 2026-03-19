@@ -6,6 +6,7 @@ export type BalanceDueMode = 'LEGAL_COSTS_ONLY' | 'FULL_AMOUNT';
 export interface LineItemTask {
   category: string;
   subTask?: string;
+  manualText?: string;
 }
 
 export interface LineItem {

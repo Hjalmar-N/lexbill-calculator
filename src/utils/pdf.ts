@@ -141,6 +141,7 @@ export function generateCostReportPdf(
       const hrs = getTimeEntryHours(item.hours, item.minutes);
       if (hrs > 0) {
         const desc = item.tasks.flatMap(t => {
+          if (t.category === 'Manual') return [t.manualText || 'General Legal Work'];
           if (t.subTask) return [t.subTask];
           const subs = TASK_CATEGORIES[t.category as keyof typeof TASK_CATEGORIES];
           return subs ?? [t.category];
