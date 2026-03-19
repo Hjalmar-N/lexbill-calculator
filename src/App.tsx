@@ -16,9 +16,14 @@ import {
 } from './utils/calculations';
 import { formatCurrency, formatDate } from './utils/format';
 import { generateCostReportPdf } from './utils/pdf';
-import { loadSavedCases, saveCaseToStorage } from './utils/storage';
+import {
+  loadCasesFromFirestore,
+  saveCaseToFirestore,
+  deleteCaseFromFirestore,
+} from './utils/storage';
 import { signOut } from 'firebase/auth';
 import { auth } from './utils/firebase';
+import { useAuth } from './contexts/AuthContext';
 import { LineItemRow } from './components/LineItemRow';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -37,8 +42,11 @@ function normalizeFormValues(partial?: WatchedFormValues): CaseFormValues {
 }
 
 function App() {
+  const { currentUser } = useAuth();
   const [savedCases, setSavedCases] = useState<Record<string, SavedCase>>({});
+  const [activeDocId, setActiveDocId] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string>('');
+  const [saving, setSaving] = useState(false);
   const [persistedTotals, setPersistedTotals] = useState<TotalsSnapshot>(() =>
     getCalculatedTotals(DEFAULT_FORM_VALUES),
   );
@@ -56,8 +64,9 @@ function App() {
   const values = normalizeFormValues(watchedValues);
   
   useEffect(() => {
-    setSavedCases(loadSavedCases());
-  }, []);
+    if (!currentUser) return;
+    loadCasesFromFirestore(currentUser.uid).then(setSavedCases).catch(console.error);
+  }, [currentUser]);
 
   const liveTotals = useMemo(
     () =>
@@ -68,39 +77,67 @@ function App() {
     [persistedTotals.claimInterest, persistedTotals.legalInterest, values],
   );
 
-  const onSave = (formValues: CaseFormValues) => {
-    const claimInterest = getInterestAmount(
-      getClaimAmountEur(formValues),
-      formValues.annualInterestRate,
-      formValues.claimInterestStartDate,
-    );
-    const legalInterest = getInterestAmount(
-      buildLegalCostPrincipal(formValues),
-      formValues.annualInterestRate,
-      formValues.legalInterestStartDate,
-    );
-    const totals = getCalculatedTotals(formValues, { claimInterest, legalInterest });
+  const onSave = async (formValues: CaseFormValues) => {
+    if (!currentUser) return;
+    setSaving(true);
+    try {
+      const claimInterest = getInterestAmount(
+        getClaimAmountEur(formValues),
+        formValues.annualInterestRate,
+        formValues.claimInterestStartDate,
+      );
+      const legalInterest = getInterestAmount(
+        buildLegalCostPrincipal(formValues),
+        formValues.annualInterestRate,
+        formValues.legalInterestStartDate,
+      );
+      const totals = getCalculatedTotals(formValues, { claimInterest, legalInterest });
 
-    const calculatedAt = new Date().toISOString();
-    const savedCase: SavedCase = {
-      form: { ...formValues, ftNumberOfPersons: formValues.caseType === 'FT' ? formValues.ftNumberOfPersons : '' },
-      calculatedAt,
-      annualInterestRate: formValues.annualInterestRate,
-      totals,
-    };
+      const calculatedAt = new Date().toISOString();
+      const savedCase: SavedCase = {
+        form: { ...formValues, ftNumberOfPersons: formValues.caseType === 'FT' ? formValues.ftNumberOfPersons : '' },
+        calculatedAt,
+        annualInterestRate: formValues.annualInterestRate,
+        totals,
+      };
 
-    saveCaseToStorage(formValues.caseNumber, savedCase);
-    setSavedCases(loadSavedCases());
-    setPersistedTotals(totals);
-    setLastSavedAt(calculatedAt);
+      const docId = await saveCaseToFirestore(currentUser.uid, activeDocId, savedCase);
+      setActiveDocId(docId);
+      setSavedCases(await loadCasesFromFirestore(currentUser.uid));
+      setPersistedTotals(totals);
+      setLastSavedAt(calculatedAt);
+    } catch (err) {
+      console.error('Save failed:', err);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const loadCase = (caseKey: string) => {
-    const saved = savedCases[caseKey];
+  const loadCase = (docId: string) => {
+    const saved = savedCases[docId];
     if (!saved) return;
+    setActiveDocId(docId);
     reset(saved.form);
     setPersistedTotals(saved.totals);
     setLastSavedAt(saved.calculatedAt);
+  };
+
+  const newCase = () => {
+    setActiveDocId(null);
+    reset(DEFAULT_FORM_VALUES);
+    setPersistedTotals(getCalculatedTotals(DEFAULT_FORM_VALUES));
+    setLastSavedAt('');
+  };
+
+  const deleteCase = async (docId: string) => {
+    if (!currentUser) return;
+    try {
+      await deleteCaseFromFirestore(currentUser.uid, docId);
+      setSavedCases(await loadCasesFromFirestore(currentUser.uid));
+      if (activeDocId === docId) newCase();
+    } catch (err) {
+      console.error('Delete failed:', err);
+    }
   };
 
   const currCurrency = values.country === 'FI' ? 'EUR' : 'SEK';
@@ -109,11 +146,12 @@ function App() {
     <div className="invoice-builder-wrapper">
       <div className="top-bar-actions">
         <button type="button" className="btn btn-danger" onClick={() => signOut(auth)}>Log Out</button>
+        <button type="button" className="btn btn-secondary" onClick={newCase}>New Case</button>
         <button type="button" className="btn btn-secondary" onClick={() => generateCostReportPdf(values, liveTotals, lastSavedAt || new Date().toISOString())}>
           Generate PDF
         </button>
-        <button type="button" className="btn btn-primary" onClick={handleSubmit(onSave)}>
-          Save Progress
+        <button type="button" className="btn btn-primary" onClick={handleSubmit(onSave)} disabled={saving}>
+          {saving ? 'Saving…' : 'Save Progress'}
         </button>
       </div>
 
@@ -280,8 +318,17 @@ function App() {
               <label>Load Saved Case</label>
               <select defaultValue="" onChange={(e) => { if (e.target.value) loadCase(e.target.value); }}>
                 <option value="">Select saved case to load...</option>
-                {Object.keys(savedCases).map((key) => <option key={key} value={key}>{key}</option>)}
+                {Object.entries(savedCases).map(([docId, c]) => (
+                  <option key={docId} value={docId}>
+                    {c.form.caseNumber || c.form.internalReference || 'Untitled'}
+                  </option>
+                ))}
               </select>
+              {activeDocId && (
+                <button type="button" className="btn btn-danger" style={{ marginTop: '4px', fontSize: '0.75rem', padding: '2px 8px' }} onClick={() => deleteCase(activeDocId)}>
+                  Delete Current Case
+                </button>
+              )}
             </div>
           </div>
           
