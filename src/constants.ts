@@ -7,6 +7,7 @@ export const MINUTE_OPTIONS = [0, 15, 30, 45];
 export const HOUR_OPTIONS = Array.from({ length: 21 }, (_, index) => index);
 
 export const SEK_HOURLY_RATE = 1982.50;
+export const SEK_HOURLY_RATE_EX_VAT = 1586;
 export const EUR_HOURLY_RATE = 250;
 
 export const TASK_CATEGORIES = {

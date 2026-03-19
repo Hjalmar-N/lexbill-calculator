@@ -2,6 +2,7 @@ import {
   DEFAULT_ANNUAL_INTEREST_RATE,
   EUR_HOURLY_RATE,
   SEK_HOURLY_RATE,
+  SEK_HOURLY_RATE_EX_VAT,
 } from '../constants';
 import type {
   BalanceDueMode,
@@ -14,8 +15,9 @@ import type {
 } from '../types';
 import { roundCurrency, toNumber } from './format';
 
-export function getHourlyRate(country: Country): number {
-  return country === 'SE' ? SEK_HOURLY_RATE : EUR_HOURLY_RATE;
+export function getHourlyRate(country: Country, partyType: PartyType): number {
+  if (country === 'FI') return EUR_HOURLY_RATE;
+  return partyType === 'FR' ? SEK_HOURLY_RATE_EX_VAT : SEK_HOURLY_RATE;
 }
 
 export function getVatRate(country: Country, partyType: PartyType): number {
@@ -84,7 +86,7 @@ export function getCalculatedTotals(
     legalInterest?: number;
   },
 ): TotalsSnapshot {
-  const hourlyRate = getHourlyRate(values.country);
+  const hourlyRate = getHourlyRate(values.country, values.partyType);
   const vatRate = getVatRate(values.country, values.partyType);
   
   const claimAmountEur = getClaimAmountEur(values);
@@ -165,7 +167,7 @@ export function getBalanceDue(totals: TotalsSnapshot, mode: BalanceDueMode, case
 
 export function buildLegalCostPrincipal(values: CaseFormValues): number {
   const vatRate = getVatRate(values.country, values.partyType);
-  const hourlyRate = getHourlyRate(values.country);
+  const hourlyRate = getHourlyRate(values.country, values.partyType);
 
   if (values.caseType === 'FT') {
     const ftCost = toNumber(values.ftNumberOfPersons) * hourlyRate;

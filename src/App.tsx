@@ -10,9 +10,7 @@ import {
   getBalanceDue,
   getCalculatedTotals,
   getClaimAmountEur,
-  getHourlyRate,
   getInterestAmount,
-  getVatRate,
 } from './utils/calculations';
 import { formatCurrency, formatDate } from './utils/format';
 import { generateCostReportPdf } from './utils/pdf';
