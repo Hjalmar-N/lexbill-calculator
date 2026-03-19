@@ -25,7 +25,7 @@ export function generateCostReportPdf(
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(22);
   doc.setTextColor(50, 50, 50);
-  doc.text('invoice', pageWidth - 15, 23, { align: 'right' });
+  doc.text(values.country === 'SE' ? 'Kostnadsredogörelse' : 'invoice', pageWidth - 15, 23, { align: 'right' });
   
   doc.setFontSize(10);
   doc.setTextColor(100, 100, 100);
