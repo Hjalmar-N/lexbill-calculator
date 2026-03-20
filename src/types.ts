@@ -2,6 +2,7 @@ export type Country = 'SE' | 'FI';
 export type PartyType = 'PRIVATE_PERSON' | 'FR';
 export type CaseType = 'FT' | 'OT';
 export type BalanceDueMode = 'LEGAL_COSTS_ONLY' | 'FULL_AMOUNT';
+export type SwedenRateYear = 'BEFORE_2026' | 'AFTER_2026';
 
 export interface LineItemTask {
   category: string;
@@ -34,6 +35,7 @@ export interface CaseFormValues {
   extraExpensesCurrency: 'EUR' | 'SEK';
   exchangeRateSekToEur: number;
   balanceDueMode: BalanceDueMode;
+  swedenRateYear: SwedenRateYear;
   lineItems: LineItem[];
   pdfPreferences: Record<string, boolean>;
 }

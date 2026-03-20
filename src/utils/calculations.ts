@@ -3,6 +3,8 @@ import {
   EUR_HOURLY_RATE,
   SEK_HOURLY_RATE,
   SEK_HOURLY_RATE_EX_VAT,
+  SEK_HOURLY_RATE_2026,
+  SEK_HOURLY_RATE_2026_EX_VAT,
 } from '../constants';
 import type {
   BalanceDueMode,
@@ -11,13 +13,16 @@ import type {
   Country,
   LineItem,
   PartyType,
+  SwedenRateYear,
   TotalsSnapshot,
 } from '../types';
 import { roundCurrency, toNumber } from './format';
 
-export function getHourlyRate(country: Country, partyType: PartyType): number {
+export function getHourlyRate(country: Country, partyType: PartyType, swedenRateYear: SwedenRateYear = 'BEFORE_2026'): number {
   if (country === 'FI') return EUR_HOURLY_RATE;
-  return partyType === 'FR' ? SEK_HOURLY_RATE_EX_VAT : SEK_HOURLY_RATE;
+  const after2026 = swedenRateYear === 'AFTER_2026';
+  if (partyType === 'FR') return after2026 ? SEK_HOURLY_RATE_2026_EX_VAT : SEK_HOURLY_RATE_EX_VAT;
+  return after2026 ? SEK_HOURLY_RATE_2026 : SEK_HOURLY_RATE;
 }
 
 export function getVatRate(country: Country, partyType: PartyType): number {
@@ -86,7 +91,7 @@ export function getCalculatedTotals(
     legalInterest?: number;
   },
 ): TotalsSnapshot {
-  const hourlyRate = getHourlyRate(values.country, values.partyType);
+  const hourlyRate = getHourlyRate(values.country, values.partyType, values.swedenRateYear);
   const vatRate = getVatRate(values.country, values.partyType);
   
   const claimAmountEur = getClaimAmountEur(values);
@@ -167,7 +172,7 @@ export function getBalanceDue(totals: TotalsSnapshot, mode: BalanceDueMode, case
 
 export function buildLegalCostPrincipal(values: CaseFormValues): number {
   const vatRate = getVatRate(values.country, values.partyType);
-  const hourlyRate = getHourlyRate(values.country, values.partyType);
+  const hourlyRate = getHourlyRate(values.country, values.partyType, values.swedenRateYear);
 
   if (values.caseType === 'FT') {
     const ftCost = toNumber(values.ftNumberOfPersons) * hourlyRate;

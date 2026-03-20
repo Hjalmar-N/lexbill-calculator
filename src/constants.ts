@@ -8,6 +8,8 @@ export const HOUR_OPTIONS = Array.from({ length: 21 }, (_, index) => index);
 
 export const SEK_HOURLY_RATE = 1982.50;
 export const SEK_HOURLY_RATE_EX_VAT = 1586;
+export const SEK_HOURLY_RATE_2026 = 2032.50;
+export const SEK_HOURLY_RATE_2026_EX_VAT = 1626;
 export const EUR_HOURLY_RATE = 250;
 
 export const TASK_CATEGORIES = {
@@ -72,6 +74,7 @@ export const DEFAULT_FORM_VALUES: CaseFormValues = {
   extraExpensesCurrency: 'EUR',
   exchangeRateSekToEur: 0.088,
   balanceDueMode: 'LEGAL_COSTS_ONLY',
+  swedenRateYear: 'BEFORE_2026',
   lineItems: [],
   pdfPreferences: DEFAULT_PDF_PREFERENCES,
 };

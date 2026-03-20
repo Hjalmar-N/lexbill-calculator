@@ -167,6 +167,16 @@ function App() {
                 <label><input type="radio" value="FI" {...register('country')} /> Finland (FI)</label>
               </div>
 
+              {values.country === 'SE' && (
+                <>
+                  <label>Swedish Rate</label>
+                  <select {...register('swedenRateYear')}>
+                    <option value="BEFORE_2026">Before 2026</option>
+                    <option value="AFTER_2026">After 2026</option>
+                  </select>
+                </>
+              )}
+
               <label>Bill To (Party)</label>
               <select {...register('partyType')}>
                 <option value="PRIVATE_PERSON">Private Person</option>
